@@ -1,463 +1,545 @@
-"""Main Kivy application for Vultr CLI."""
+"""Main Kivy application for Vultr CLI Android App."""
 
+import json
 import os
-import sys
-from typing import Optional
-
-# Add the src directory to the Python path for proper imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from kivy.app import App
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
-from kivy.uix.label import Label
-from kivy.uix.textinput import TextInput
-from kivy.uix.spinner import Spinner
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.gridlayout import GridLayout
-from kivy.uix.popup import Popup
-from kivy.uix.progressbar import ProgressBar
 from kivy.clock import Clock
 from kivy.metrics import dp
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.label import Label
+from kivy.uix.popup import Popup
+from kivy.uix.progressbar import ProgressBar
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.spinner import Spinner
+from kivy.uix.textinput import TextInput
 
 from ..api.client import VultrAPI
+
+
+class LoadingPopup(Popup):
+    """Loading popup with progress bar."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.title = "Loading"
+        self.size_hint = (0.8, 0.3)
+
+        layout = BoxLayout(orientation='vertical', padding=dp(20))
+        layout.add_widget(Label(text="Please wait..."))
+        self.progress = ProgressBar()
+        layout.add_widget(self.progress)
+
+        self.content = layout
 
 
 class DeployPage(BoxLayout):
     """Page for deploying new instances."""
 
-    def __init__(self, api_client: VultrAPI, **kwargs):
+    def __init__(self, api_client, switch_callback=None, **kwargs):
         super().__init__(**kwargs)
         self.api_client = api_client
+        self.switch_callback = switch_callback  # Callback to switch to instance list
         self.orientation = 'vertical'
         self.padding = dp(10)
         self.spacing = dp(10)
 
-        # Initialize UI components
-        self._setup_ui()
-        self._load_data()
+        self.snapshot_id = None
+        self.selected_plan_id = None
+        self.selected_region_id = None
+        self.regions_map = {}
+        self.all_plans = []
+        self.selected_plan_btn = None  # Track the currently selected plan button
 
-    def _setup_ui(self):
-        """Setup the UI components."""
-        # Title
-        title_label = Label(
-            text='Deploy New Instance',
-            size_hint_y=None,
-            height=dp(30),
-            font_size=dp(20)
-        )
-        self.add_widget(title_label)
+        self.init_ui()
 
-        # Form container
-        form_layout = GridLayout(
-            cols=2,
-            spacing=dp(10),
-            size_hint_y=None,
-            height=dp(200)
-        )
+    def init_ui(self):
+        """Initialize UI components."""
+        # City selection
+        city_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(40))
+        city_layout.add_widget(Label(text="Select City:", size_hint_x=0.3))
+        self.city_spinner = Spinner(text='Loading...', values=['Loading...'])
+        city_layout.add_widget(self.city_spinner)
+        self.add_widget(city_layout)
 
-        # Region selection
-        form_layout.add_widget(Label(text='Region:', size_hint_x=None, width=dp(100)))
-        self.region_spinner = Spinner(
-            text='Select Region',
-            values=[],
-            size_hint_x=None,
-            width=dp(200)
-        )
-        form_layout.add_widget(self.region_spinner)
+        # Plans label
+        self.add_widget(Label(text="Available Plans:", size_hint_y=None, height=dp(30)))
 
-        # Plan selection
-        form_layout.add_widget(Label(text='Plan:', size_hint_x=None, width=dp(100)))
-        self.plan_spinner = Spinner(
-            text='Select Plan',
-            values=[],
-            size_hint_x=None,
-            width=dp(200)
-        )
-        form_layout.add_widget(self.plan_spinner)
+        # Plans scroll view
+        self.plans_scroll = ScrollView()
+        self.plans_layout = GridLayout(cols=1, spacing=dp(5), size_hint_y=None)
+        self.plans_layout.bind(minimum_height=self.plans_layout.setter('height'))
+        self.plans_scroll.add_widget(self.plans_layout)
+        self.add_widget(self.plans_scroll)
 
-        # OS selection
-        form_layout.add_widget(Label(text='OS:', size_hint_x=None, width=dp(100)))
-        self.os_spinner = Spinner(
-            text='Select OS',
-            values=[],
-            size_hint_x=None,
-            width=dp(200)
-        )
-        form_layout.add_widget(self.os_spinner)
+        # Create instance button
+        self.create_btn = Button(text="Create Instance", size_hint_y=None, height=dp(50))
+        self.create_btn.disabled = True
+        self.create_btn.bind(on_press=self.create_instance)
+        self.add_widget(self.create_btn)
 
-        # Instance label
-        form_layout.add_widget(Label(text='Label:', size_hint_x=None, width=dp(100)))
-        self.label_input = TextInput(
-            multiline=False,
-            size_hint_x=None,
-            width=dp(200)
-        )
-        form_layout.add_widget(self.label_input)
+        # Load initial data
+        Clock.schedule_once(lambda dt: self.load_initial_data(), 0)
 
-        self.add_widget(form_layout)
+    def load_initial_data(self):
+        """Load initial data from API."""
+        loading = LoadingPopup()
+        loading.open()
 
-        # Deploy button
-        deploy_button = Button(
-            text='Deploy Instance',
-            size_hint_y=None,
-            height=dp(50)
-        )
-        deploy_button.bind(on_press=self.deploy_instance)
-        self.add_widget(deploy_button)
-
-        # Status label
-        self.status_label = Label(
-            text='',
-            size_hint_y=None,
-            height=dp(30)
-        )
-        self.add_widget(self.status_label)
-
-    def _load_data(self):
-        """Load data from API."""
         try:
             # Load regions
             regions = self.api_client.get_regions()
-            region_values = [f"{r['id']} - {r['city']}, {r['country']}" for r in regions]
-            self.region_spinner.values = region_values
+            city_values = []
+            for region in regions:
+                city = region.get("city", "Unknown")
+                region_id = region.get("id")
+                self.regions_map[city] = region_id
+                city_values.append(city)
+
+            self.city_spinner.values = city_values
+
+            # Set default to Osaka if available
+            if "Osaka" in city_values:
+                self.city_spinner.text = "Osaka"
+            elif city_values:
+                self.city_spinner.text = city_values[0]
 
             # Load plans
-            plans = self.api_client.get_plans()
-            plan_values = [f"{p['id']} - ${p['monthly_cost']}/mo - {p['vcpu_count']}vCPU/{p['ram']}/{p['disk']}" for p in plans]
-            self.plan_spinner.values = plan_values
+            self.all_plans = self.api_client.get_plans("vc2")
 
-            # Load OS images
-            os_images = self.api_client.get_os_images()
-            os_values = [f"{os['id']} - {os['name']}" for os in os_images]
-            self.os_spinner.values = os_values
+            # Load snapshot
+            snapshots = self.api_client.get_snapshots()
+            if snapshots:
+                self.snapshot_id = snapshots[0].get("id")
+
+            self.city_spinner.bind(text=self.on_city_changed)
+            self.on_city_changed(self.city_spinner, self.city_spinner.text)
 
         except Exception as e:
-            self.status_label.text = f'Error loading data: {str(e)}'
+            self.show_error(f"Failed to load data: {str(e)}")
+        finally:
+            loading.dismiss()
 
-    def deploy_instance(self, instance):
-        """Deploy a new instance."""
+    def on_city_changed(self, spinner, city):
+        """Handle city selection change."""
+        if city in self.regions_map:
+            self.selected_region_id = self.regions_map[city]
+            # Reset plan selection when city changes
+            self.selected_plan_id = None
+            self.selected_plan_btn = None
+            self.create_btn.disabled = True
+            self.load_available_plans()
+
+    def load_available_plans(self):
+        """Load available plans for selected region."""
+        if not self.selected_region_id:
+            return
+
+        loading = LoadingPopup()
+        loading.open()
+
         try:
-            region_id = self.region_spinner.text.split(' - ')[0] if ' - ' in self.region_spinner.text else None
-            plan_id = self.plan_spinner.text.split(' - ')[0] if ' - ' in self.plan_spinner.text else None
-            os_id = self.os_spinner.text.split(' - ')[0] if ' - ' in self.os_spinner.text else None
-            label = self.label_input.text.strip()
+            available_plans = self.api_client.get_available_plans_in_region(self.selected_region_id)
 
-            if not all([region_id, plan_id, os_id, label]):
-                self.status_label.text = 'Please fill in all fields'
-                return
+            # Clear existing plans
+            self.plans_layout.clear_widgets()
 
-            instance_config = {
-                'region': region_id,
-                'plan': plan_id,
-                'os_id': os_id,
-                'label': label
-            }
+            # Filter plans based on availability
+            filtered_plans = [plan for plan in self.all_plans if plan["id"] in available_plans]
 
-            result = self.api_client.create_instance(instance_config)
-            if result:
-                self.status_label.text = f'Instance deployed successfully: {result["id"]}'
-                self.label_input.text = ''
-            else:
-                self.status_label.text = 'Failed to deploy instance'
+            for plan in filtered_plans:
+                plan_btn = Button(
+                    text=f"{plan['id']} - {plan.get('vcpu_count', 'N/A')} vCPU - ${plan.get('monthly_cost', 'N/A')}/month",
+                    size_hint_y=None,
+                    height=dp(50)
+                )
+                plan_btn.bind(on_press=lambda btn, p=plan: self.select_plan(p, btn))
+                self.plans_layout.add_widget(plan_btn)
 
         except Exception as e:
-            self.status_label.text = f'Error: {str(e)}'
+            self.show_error(f"Failed to load available plans: {str(e)}")
+        finally:
+            loading.dismiss()
+
+    def select_plan(self, plan, btn):
+        """Select a plan and highlight the button."""
+        # Reset previous selection
+        if self.selected_plan_btn:
+            self.selected_plan_btn.background_color = (1.0, 1.0, 1.0, 1.0)
+
+        # Highlight the selected button (light blue)
+        btn.background_color = (0.6, 0.8, 1.0, 1.0)
+        self.selected_plan_btn = btn
+
+        # Store selected plan ID
+        self.selected_plan_id = plan["id"]
+        self.create_btn.disabled = False
+
+    def create_instance(self, instance):
+        """Create instance button handler."""
+        if not all([self.selected_plan_id, self.selected_region_id, self.snapshot_id]):
+            self.show_error("Please select a plan and ensure all data is loaded")
+            return
+
+        content = BoxLayout(orientation='vertical', spacing=dp(10))
+        content.add_widget(Label(text=f"Create instance with:\nPlan: {self.selected_plan_id}\nRegion: {self.selected_region_id}"))
+
+        btn_layout = BoxLayout(spacing=dp(10), size_hint_y=None, height=dp(40))
+        yes_btn = Button(text="Yes")
+        no_btn = Button(text="No")
+
+        popup = Popup(title="Confirm", content=content, size_hint=(0.8, 0.4))
+
+        def on_yes(btn):
+            popup.dismiss()
+            self.do_create_instance()
+
+        def on_no(btn):
+            popup.dismiss()
+
+        yes_btn.bind(on_press=on_yes)
+        no_btn.bind(on_press=on_no)
+
+        btn_layout.add_widget(yes_btn)
+        btn_layout.add_widget(no_btn)
+        content.add_widget(btn_layout)
+
+        popup.open()
+
+    def do_create_instance(self):
+        """Actually create the instance."""
+        loading = LoadingPopup()
+        loading.open()
+
+        try:
+            result = self.api_client.create_instance(
+                self.selected_plan_id,
+                self.selected_region_id,
+                self.snapshot_id
+            )
+            self.show_success("Instance created successfully!")
+            # Switch to instance list using callback if available
+            if self.switch_callback:
+                self.switch_callback()
+        except Exception as e:
+            self.show_error(f"Failed to create instance: {str(e)}")
+        finally:
+            loading.dismiss()
+
+    def show_error(self, message):
+        """Show error popup."""
+        scroll = ScrollView(size_hint=(1, 1))
+        label = Label(text=message, text_size=(None, None), size_hint_y=None)
+        label.bind(texture_size=label.setter('size'))
+        scroll.add_widget(label)
+
+        popup = Popup(title="Error", content=scroll, size_hint=(0.9, 0.6))
+        popup.open()
+
+    def show_success(self, message):
+        """Show success popup."""
+        scroll = ScrollView(size_hint=(1, 1))
+        label = Label(text=message, text_size=(None, None), size_hint_y=None)
+        label.bind(texture_size=label.setter('size'))
+        scroll.add_widget(label)
+
+        popup = Popup(title="Success", content=scroll, size_hint=(0.9, 0.6))
+        popup.open()
+        # Auto-close after 2 seconds
+        Clock.schedule_once(lambda dt: popup.dismiss(), 2)
 
 
 class InstanceListPage(BoxLayout):
     """Page for listing and managing instances."""
 
-    def __init__(self, api_client: VultrAPI, **kwargs):
+    def __init__(self, api_client, **kwargs):
         super().__init__(**kwargs)
         self.api_client = api_client
         self.orientation = 'vertical'
         self.padding = dp(10)
         self.spacing = dp(10)
 
-        # Initialize UI components
-        self._setup_ui()
-        self.refresh_instances()
+        self.init_ui()
 
-    def _setup_ui(self):
-        """Setup the UI components."""
-        # Title
-        title_label = Label(
-            text='Instance Management',
-            size_hint_y=None,
-            height=dp(30),
-            font_size=dp(20)
-        )
-        self.add_widget(title_label)
-
+    def init_ui(self):
+        """Initialize UI components."""
         # Refresh button
-        refresh_button = Button(
-            text='Refresh',
-            size_hint_y=None,
-            height=dp(40)
-        )
-        refresh_button.bind(on_press=self.refresh_instances)
-        self.add_widget(refresh_button)
+        refresh_btn = Button(text="Refresh", size_hint_y=None, height=dp(50))
+        refresh_btn.bind(on_press=lambda x: self.load_instances())
+        self.add_widget(refresh_btn)
 
-        # Scrollable instance list
-        scroll_view = ScrollView(size_hint=(1, 1))
-        self.instance_list_layout = GridLayout(
-            cols=1,
-            spacing=dp(10),
-            size_hint_y=None
-        )
-        self.instance_list_layout.bind(minimum_height=self.instance_list_layout.setter('height'))
-        scroll_view.add_widget(self.instance_list_layout)
-        self.add_widget(scroll_view)
+        # Instances scroll view
+        self.instances_scroll = ScrollView()
+        self.instances_layout = GridLayout(cols=1, spacing=dp(5), size_hint_y=None)
+        self.instances_layout.bind(minimum_height=self.instances_layout.setter('height'))
+        self.instances_scroll.add_widget(self.instances_layout)
+        self.add_widget(self.instances_scroll)
 
-        # Status label
-        self.status_label = Label(
-            text='',
-            size_hint_y=None,
-            height=dp(30)
-        )
-        self.add_widget(self.status_label)
+        # Load initial data
+        Clock.schedule_once(lambda dt: self.load_instances(), 0)
 
-    def refresh_instances(self, instance=None):
-        """Refresh the instances list."""
+    def load_instances(self):
+        """Load instances from API."""
+        loading = LoadingPopup()
+        loading.open()
+
         try:
             instances = self.api_client.get_instances()
-            self.instance_list_layout.clear_widgets()
+            self.instances_layout.clear_widgets()
 
-            if not instances:
-                self.status_label.text = 'No instances found'
-                return
+            for instance in instances:
+                instance_layout = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(140))
 
-            for instance_data in instances:
-                instance_item = self._create_instance_item(instance_data)
-                self.instance_list_layout.add_widget(instance_item)
+                # Instance info
+                info_text = f"ID: {instance.get('id', 'N/A')}\n"
+                info_text += f"Plan: {instance.get('plan', 'N/A')}\n"
+                info_text += f"IP: {instance.get('main_ip', 'N/A')}\n"
+                info_text += f"Status: {instance.get('status', 'N/A')}"
 
-            self.status_label.text = f'Found {len(instances)} instances'
+                # Add pending charges if available
+                pending_charges = instance.get('pending_charges')
+                if pending_charges:
+                    info_text += f"\nPending: ${pending_charges}"
+
+                info_label = Label(text=info_text, size_hint_y=0.7, text_size=(None, None))
+                instance_layout.add_widget(info_label)
+
+                # Delete button
+                delete_btn = Button(text="Destroy", size_hint_y=None, height=dp(30))
+                instance_id = instance.get("id")
+                status = instance.get("status")
+                delete_btn.disabled = status != "active"
+                delete_btn.bind(on_press=lambda btn, id=instance_id: self.delete_instance(id))
+                instance_layout.add_widget(delete_btn)
+
+                self.instances_layout.add_widget(instance_layout)
 
         except Exception as e:
-            self.status_label.text = f'Error loading instances: {str(e)}'
-
-    def _create_instance_item(self, instance_data):
-        """Create a widget for a single instance."""
-        item_layout = BoxLayout(
-            orientation='vertical',
-            padding=dp(10),
-            spacing=dp(5),
-            size_hint_y=None,
-            height=dp(150)
-        )
-
-        # Instance info
-        info_label = Label(
-            text=f"{instance_data.get('label', 'Unnamed')} ({instance_data['id']})\n"
-                 f"Status: {instance_data.get('status', 'Unknown')}\n"
-                 f"IP: {instance_data.get('main_ip', 'N/A')}\n"
-                 f"Plan: {instance_data.get('plan', 'Unknown')}",
-            size_hint_y=None,
-            height=dp(80),
-            text_size=(None, dp(80))
-        )
-        item_layout.add_widget(info_label)
-
-        # Action buttons
-        button_layout = BoxLayout(
-            orientation='horizontal',
-            spacing=dp(10),
-            size_hint_y=None,
-            height=dp(40)
-        )
-
-        start_btn = Button(text='Start')
-        stop_btn = Button(text='Stop')
-        reboot_btn = Button(text='Reboot')
-        delete_btn = Button(text='Delete')
-
-        start_btn.bind(on_press=lambda x, i=instance_data['id']: self.start_instance(i))
-        stop_btn.bind(on_press=lambda x, i=instance_data['id']: self.stop_instance(i))
-        reboot_btn.bind(on_press=lambda x, i=instance_data['id']: self.reboot_instance(i))
-        delete_btn.bind(on_press=lambda x, i=instance_data['id']: self.delete_instance(i))
-
-        button_layout.add_widget(start_btn)
-        button_layout.add_widget(stop_btn)
-        button_layout.add_widget(reboot_btn)
-        button_layout.add_widget(delete_btn)
-
-        item_layout.add_widget(button_layout)
-
-        return item_layout
-
-    def start_instance(self, instance_id):
-        """Start an instance."""
-        try:
-            if self.api_client.start_instance(instance_id):
-                self.status_label.text = f'Instance {instance_id} started'
-            else:
-                self.status_label.text = f'Failed to start instance {instance_id}'
-        except Exception as e:
-            self.status_label.text = f'Error: {str(e)}'
-
-    def stop_instance(self, instance_id):
-        """Stop an instance."""
-        try:
-            if self.api_client.stop_instance(instance_id):
-                self.status_label.text = f'Instance {instance_id} stopped'
-            else:
-                self.status_label.text = f'Failed to stop instance {instance_id}'
-        except Exception as e:
-            self.status_label.text = f'Error: {str(e)}'
-
-    def reboot_instance(self, instance_id):
-        """Reboot an instance."""
-        try:
-            if self.api_client.reboot_instance(instance_id):
-                self.status_label.text = f'Instance {instance_id} rebooted'
-            else:
-                self.status_label.text = f'Failed to reboot instance {instance_id}'
-        except Exception as e:
-            self.status_label.text = f'Error: {str(e)}'
+            self.show_error(f"Failed to load instances: {str(e)}")
+        finally:
+            loading.dismiss()
 
     def delete_instance(self, instance_id):
-        """Delete an instance."""
+        """Delete instance button handler."""
+        content = BoxLayout(orientation='vertical', spacing=dp(10))
+        content.add_widget(Label(text=f"Destroy instance {instance_id}?"))
+
+        btn_layout = BoxLayout(spacing=dp(10), size_hint_y=None, height=dp(40))
+        yes_btn = Button(text="Yes")
+        no_btn = Button(text="No")
+
+        popup = Popup(title="Confirm", content=content, size_hint=(0.8, 0.4))
+
+        def on_yes(btn):
+            popup.dismiss()
+            self.do_delete_instance(instance_id)
+
+        def on_no(btn):
+            popup.dismiss()
+
+        yes_btn.bind(on_press=on_yes)
+        no_btn.bind(on_press=on_no)
+
+        btn_layout.add_widget(yes_btn)
+        btn_layout.add_widget(no_btn)
+        content.add_widget(btn_layout)
+
+        popup.open()
+
+    def do_delete_instance(self, instance_id):
+        """Actually delete the instance."""
+        loading = LoadingPopup()
+        loading.open()
+
         try:
-            if self.api_client.delete_instance(instance_id):
-                self.status_label.text = f'Instance {instance_id} deleted'
-                self.refresh_instances()
+            success = self.api_client.delete_instance(instance_id)
+            if success:
+                self.show_success("Instance destroyed successfully!")
+                self.load_instances()
             else:
-                self.status_label.text = f'Failed to delete instance {instance_id}'
+                self.show_error("Failed to destroy instance")
         except Exception as e:
-            self.status_label.text = f'Error: {str(e)}'
+            self.show_error(f"Failed to destroy instance: {str(e)}")
+        finally:
+            loading.dismiss()
+
+    def show_error(self, message):
+        """Show error popup."""
+        scroll = ScrollView(size_hint=(1, 1))
+        label = Label(text=message, text_size=(None, None), size_hint_y=None)
+        label.bind(texture_size=label.setter('size'))
+        scroll.add_widget(label)
+
+        popup = Popup(title="Error", content=scroll, size_hint=(0.9, 0.6))
+        popup.open()
+
+    def show_success(self, message):
+        """Show success popup."""
+        scroll = ScrollView(size_hint=(1, 1))
+        label = Label(text=message, text_size=(None, None), size_hint_y=None)
+        label.bind(texture_size=label.setter('size'))
+        scroll.add_widget(label)
+
+        popup = Popup(title="Success", content=scroll, size_hint=(0.9, 0.6))
+        popup.open()
+        # Auto-close after 2 seconds
+        Clock.schedule_once(lambda dt: popup.dismiss(), 2)
 
 
 class MainScreen(BoxLayout):
     """Main application screen."""
 
-    def __init__(self, api_client: VultrAPI, **kwargs):
+    def __init__(self, api_client, **kwargs):
         super().__init__(**kwargs)
         self.api_client = api_client
         self.orientation = 'vertical'
 
-        # Navigation
-        nav_layout = BoxLayout(
-            orientation='horizontal',
-            size_hint_y=None,
-            height=dp(50),
-            padding=dp(10),
-            spacing=dp(10)
-        )
+        self.init_ui()
 
-        deploy_btn = Button(text='Deploy')
-        instances_btn = Button(text='Instances')
-
-        deploy_btn.bind(on_press=self.show_deploy_page)
-        instances_btn.bind(on_press=self.show_instances_page)
-
-        nav_layout.add_widget(deploy_btn)
-        nav_layout.add_widget(instances_btn)
+    def init_ui(self):
+        """Initialize UI components."""
+        # Navigation buttons
+        nav_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(50))
+        self.deploy_btn = Button(text="Deploy Instance")
+        self.instance_list_btn = Button(text="Instance List")
+        self.deploy_btn.bind(on_press=lambda x: self.switch_to_deploy())
+        self.instance_list_btn.bind(on_press=lambda x: self.switch_to_instance_list())
+        nav_layout.add_widget(self.deploy_btn)
+        nav_layout.add_widget(self.instance_list_btn)
         self.add_widget(nav_layout)
 
-        # Content area
-        self.content_area = BoxLayout()
-        self.add_widget(self.content_area)
+        # Content area - pass callback to switch to instance list
+        self.deploy_page = DeployPage(self.api_client, switch_callback=self.switch_to_instance_list)
+        self.instance_list_page = InstanceListPage(self.api_client)
+        self.add_widget(self.deploy_page)
 
         # Show deploy page by default
-        self.show_deploy_page()
+        self.current_page = self.deploy_page
 
-    def show_deploy_page(self, instance=None):
-        """Show the deploy page."""
-        self.content_area.clear_widgets()
-        deploy_page = DeployPage(self.api_client)
-        self.content_area.add_widget(deploy_page)
+    def switch_to_deploy(self):
+        """Switch to deploy page."""
+        if self.current_page != self.deploy_page:
+            self.remove_widget(self.current_page)
+            self.add_widget(self.deploy_page)
+            self.current_page = self.deploy_page
 
-    def show_instances_page(self, instance=None):
-        """Show the instances page."""
-        self.content_area.clear_widgets()
-        instances_page = InstanceListPage(self.api_client)
-        self.content_area.add_widget(instances_page)
+    def switch_to_instance_list(self):
+        """Switch to instance list page."""
+        if self.current_page != self.instance_list_page:
+            self.remove_widget(self.current_page)
+            self.add_widget(self.instance_list_page)
+            self.current_page = self.instance_list_page
+            self.instance_list_page.load_instances()
 
 
 class VultrCliApp(App):
     """Main Kivy application class."""
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.api_key = api_key or os.environ.get('VULTR_API_KEY', '')
+        self.api_key = None
+        self.api_client = None
 
     def build(self):
         """Build the application."""
-        self.title = 'Vultr CLI'
+        self.title = "Vultr CLI"
 
-        if not self.api_key:
-            # Show API key input dialog
-            return self._create_api_key_input()
+        # Try to load API key from config file
+        config_file = "vultr_config.json"
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    api_key = config.get('api_key')
+                    if api_key:
+                        # Test the API key
+                        test_client = VultrAPI(api_key)
+                        regions = test_client.get_regions()
+                        if regions:
+                            self.api_key = api_key
+                            self.api_client = test_client
+                            return MainScreen(self.api_client)
+            except Exception:
+                pass
 
-        try:
-            api_client = VultrAPI(self.api_key)
-            return MainScreen(api_client)
-        except Exception as e:
-            error_label = Label(text=f'Error: {str(e)}')
-            return error_label
+        # If config file doesn't exist or API key is invalid, show API key screen
+        return self.get_api_key_screen()
 
-    def _create_api_key_input(self):
-        """Create API key input dialog."""
-        layout = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(10))
+    def get_api_key_screen(self):
+        """Create API key input screen."""
+        layout = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(20))
 
-        title_label = Label(
-            text='Enter Vultr API Key:',
-            size_hint_y=None,
-            height=dp(30),
-            font_size=dp(18)
-        )
-        layout.add_widget(title_label)
+        layout.add_widget(Label(text="Enter your Vultr API Key:"))
 
-        self.api_key_input = TextInput(
-            multiline=False,
-            password=True,
-            size_hint_y=None,
-            height=dp(40)
-        )
-        layout.add_widget(self.api_key_input)
+        self.api_input = TextInput(multiline=False, password=True)
+        layout.add_widget(self.api_input)
 
-        submit_btn = Button(
-            text='Submit',
-            size_hint_y=None,
-            height=dp(50)
-        )
-        submit_btn.bind(on_press=self._on_api_key_submit)
+        submit_btn = Button(text="Submit", size_hint_y=None, height=dp(50))
+        submit_btn.bind(on_press=self.submit_api_key)
         layout.add_widget(submit_btn)
-
-        self.error_label = Label(text='', color=(1, 0, 0, 1))
-        layout.add_widget(self.error_label)
 
         return layout
 
-    def _on_api_key_submit(self, instance):
+    def submit_api_key(self, instance):
         """Handle API key submission."""
-        api_key = self.api_key_input.text.strip()
+        api_key = self.api_input.text.strip()
         if not api_key:
-            self.error_label.text = 'Please enter an API key'
+            self.show_error("API Key is required")
             return
 
-        try:
-            # Test the API key
-            api_client = VultrAPI(api_key)
-            regions = api_client.get_regions()
+        # Test the API key
+        loading = LoadingPopup()
+        loading.open()
 
+        try:
+            test_client = VultrAPI(api_key)
+            regions = test_client.get_regions()
             if regions:
                 self.api_key = api_key
-                self.root.clear_widgets()
-                main_screen = MainScreen(api_client)
-                self.root.add_widget(main_screen)
+                self.api_client = test_client
+
+                # Save API key to config file
+                config_file = "vultr_config.json"
+                config = {"api_key": api_key}
+                with open(config_file, 'w') as f:
+                    json.dump(config, f)
+
+                loading.dismiss()
+                self.show_success("API Key saved successfully!")
+                self.show_main_screen()
             else:
-                self.error_label.text = 'Invalid API key or no access'
-
+                loading.dismiss()
+                self.show_error("Invalid API Key")
         except Exception as e:
-            self.error_label.text = f'Error: {str(e)}'
+            loading.dismiss()
+            self.show_error(f"Failed to connect: {str(e)}")
 
+    def show_main_screen(self):
+        """Switch to main screen."""
+        self.root_window.remove_widget(self.root)
+        self.root = MainScreen(self.api_client)
+        self.root_window.add_widget(self.root)
 
-def main():
-    """Main entry point for the application."""
-    VultrCliApp().run()
+    def show_error(self, message):
+        """Show error popup."""
+        scroll = ScrollView(size_hint=(1, 1))
+        label = Label(text=message, text_size=(None, None), size_hint_y=None)
+        label.bind(texture_size=label.setter('size'))
+        scroll.add_widget(label)
 
+        popup = Popup(title="Error", content=scroll, size_hint=(0.9, 0.6))
+        popup.open()
 
-if __name__ == '__main__':
-    main()
+    def show_success(self, message):
+        """Show success popup."""
+        scroll = ScrollView(size_hint=(1, 1))
+        label = Label(text=message, text_size=(None, None), size_hint_y=None)
+        label.bind(texture_size=label.setter('size'))
+        scroll.add_widget(label)
+
+        popup = Popup(title="Success", content=scroll, size_hint=(0.9, 0.6))
+        popup.open()
+        # Auto-close after 2 seconds
+        Clock.schedule_once(lambda dt: popup.dismiss(), 2)
