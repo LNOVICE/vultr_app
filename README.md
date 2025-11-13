@@ -188,6 +188,16 @@ The app uses `VultrAPI` class to interact with Vultr API:
 - **Cython errors**: Make sure Cython is installed: `pip install cython`
 - **NDK download errors**: Check your internet connection and Android SDK settings
 - **Architecture issues**: Only arm64-v8a is configured in buildozer.spec
+- **jnius compilation errors**: When encountering Cython compilation errors related to jnius, you may need to manually modify the following .pyx files:
+  - `.buildozer/android/platform/build-arm64-v8a/build/other_builds/pyjnius-sdl2/arm64-v8a__ndk_target_21/pyjnius/jnius/`
+    - `jnius_conversion.pxi`
+    - `jnius_utils.pxi`
+    - `jnius.pyx`
+  - `.buildozer/android/platform/build-arm64-v8a/build/other_builds/kivy/arm64-v8a__ndk_target_21/kivy/kivy/`
+    - `weakproxy.pyx`
+    - `graphics/opengl.pyx`
+    - `graphics/context_instructions.pyx`
+  These modifications are typically needed to fix Cython syntax compatibility issues with newer Python versions or Android NDK targets.
 
 ### Runtime Issues
 
