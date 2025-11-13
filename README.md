@@ -71,10 +71,21 @@ adb install bin/vultrcli-1.0.0-arm64-v8a-debug.apk
 
 ### First Launch
 
-1. Install the APK on your Android device
-2. Open the app
-3. Enter your Vultr API key when prompted
-4. The app will verify the API key and load the main interface
+1. **Obtain Vultr API Key**:
+   - Visit https://my.vultr.com/settings/#settingsapi
+   - Create a new API key with appropriate permissions
+   - Copy the API key
+
+2. **Prepare Snapshot**:
+   - This app requires a pre-created snapshot to deploy instances
+   - Log in to Vultr web console
+   - Create a snapshot of your preferred server configuration
+   - Note: Instances are created based on this snapshot
+
+3. Install the APK on your Android device
+4. Open the app
+5. Enter your Vultr API key when prompted
+6. The app will verify the API key and load the main interface
 
 ### Main Features
 
@@ -85,6 +96,8 @@ adb install bin/vultrcli-1.0.0-arm64-v8a-debug.apk
 - Select Operating System
 - Enter a label for your instance
 - Tap "Deploy Instance"
+
+**Note**: Deployment requires a pre-existing snapshot in your Vultr account. Future versions will support creating instances directly from OS images.
 
 #### Manage Instances
 - Tap "Instances" in the navigation
