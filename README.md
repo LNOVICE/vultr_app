@@ -6,8 +6,8 @@ An Android application for managing Vultr cloud services.
 
 - **Mobile-First UI**: Kivy-based mobile application optimized for Android
 - **Full API Integration**: Complete integration with Vultr API v2
-- **Instance Management**: Create, delete, start, stop, and reboot instances from your mobile device
-- **Resource Browser**: View and select regions, plans, and OS images
+- **Instance Management**: Create, delete instances from your mobile device
+- **Resource Browser**: View and select regions, plans
 - **Real-time Status**: Monitor instance status and IP addresses
 - **Secure**: API key authentication with secure storage
 
