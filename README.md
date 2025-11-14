@@ -90,19 +90,18 @@ adb install bin/vultrcli-1.0.0-arm64-v8a-debug.apk
 ### Main Features
 
 #### Deploy New Instance
-- Tap "Deploy" in the navigation
-- Select Region (data center location)
-- Choose Plan (server specifications)
-- Select Operating System
-- Enter a label for your instance
-- Tap "Deploy Instance"
+- Tap "Deploy Instance" in the navigation
+- Select City (data center location)
+- Choose Plan (server specifications) - displayed with vCPU and monthly cost
+  - Selected plan will be highlighted
+- Tap "Create Instance" to deploy
 
-**Note**: Deployment requires a pre-existing snapshot in your Vultr account. Future versions will support creating instances directly from OS images.
+**Note**: Deployment requires a pre-existing snapshot in your Vultr account.
 
 #### Manage Instances
-- Tap "Instances" in the navigation
-- View all your instances with status and IP information
-- Start, Stop, Reboot, or Delete instances
+- Tap "Instance List" in the navigation
+- View all your instances with status, IP, pending charges, and server status
+- Delete instances (Destroy button is disabled for instances not in "ok" status)
 - Pull-to-refresh to update instance status
 
 #### API Key Management
