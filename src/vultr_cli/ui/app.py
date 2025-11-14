@@ -296,7 +296,8 @@ class InstanceListPage(BoxLayout):
                 info_text = f"ID: {instance.get('id', 'N/A')}\n"
                 info_text += f"Plan: {instance.get('plan', 'N/A')}\n"
                 info_text += f"IP: {instance.get('main_ip', 'N/A')}\n"
-                info_text += f"Status: {instance.get('status', 'N/A')}"
+                info_text += f"Status: {instance.get('status', 'N/A')}\n"
+                info_text += f"Server_status: {instance.get('server_status', 'N/A')}"
 
                 # Add pending charges if available
                 pending_charges = instance.get('pending_charges')
@@ -309,8 +310,8 @@ class InstanceListPage(BoxLayout):
                 # Delete button
                 delete_btn = Button(text="Destroy", size_hint_y=None, height=dp(30))
                 instance_id = instance.get("id")
-                status = instance.get("status")
-                delete_btn.disabled = status != "active"
+                server_status = instance.get("server_status")
+                delete_btn.disabled = server_status != "ok"
                 delete_btn.bind(on_press=lambda btn, id=instance_id: self.delete_instance(id))
                 instance_layout.add_widget(delete_btn)
 
