@@ -209,6 +209,18 @@ The app uses `VultrAPI` class to interact with Vultr API:
     - `weakproxy.pyx`
     - `graphics/opengl.pyx`
     - `graphics/context_instructions.pyx`
+	
+	Please add the following line **above the first line of each of these files**:
+
+	```python
+	from ctypes import c_long as long
+	```
+
+	Then run:
+
+	```bash
+	buildozer android debug
+```	
   These modifications are typically needed to fix Cython syntax compatibility issues with newer Python versions or Android NDK targets.
 
 ### Runtime Issues
